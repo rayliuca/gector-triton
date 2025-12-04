@@ -59,9 +59,10 @@ class GECToRTriton(GECToR):
                 "Install it with: pip install tritonclient[grpc]"
             )
         
-        # Initialize the parent class but skip loading the transformer model
-        # We override __init__ to avoid loading the BERT model locally
-        super(GECToR, self).__init__(config)  # Call PreTrainedModel.__init__
+        # IMPORTANT: We bypass GECToR.__init__() to avoid loading the BERT model locally.
+        # Instead, we call PreTrainedModel.__init__() directly to set up the base model infrastructure.
+        # This is intentional: for Triton inference, we don't need local model weights.
+        super(GECToR, self).__init__(config)  # Calls PreTrainedModel.__init__
         
         self.config = config
         self.triton_url = triton_url
@@ -150,21 +151,19 @@ class GECToRTriton(GECToR):
         attention_mask_np = attention_mask.cpu().numpy().astype(np.int64)
         
         # Create input tensors for Triton
-        inputs = []
-        inputs.append(
-            grpcclient.InferInput("input_ids", input_ids_np.shape, "INT64")
-        )
-        inputs[0].set_data_from_numpy(input_ids_np)
+        input_ids_input = grpcclient.InferInput("input_ids", input_ids_np.shape, "INT64")
+        input_ids_input.set_data_from_numpy(input_ids_np)
         
-        inputs.append(
-            grpcclient.InferInput("attention_mask", attention_mask_np.shape, "INT64")
-        )
-        inputs[1].set_data_from_numpy(attention_mask_np)
+        attention_mask_input = grpcclient.InferInput("attention_mask", attention_mask_np.shape, "INT64")
+        attention_mask_input.set_data_from_numpy(attention_mask_np)
+        
+        inputs = [input_ids_input, attention_mask_input]
         
         # Define outputs we expect from Triton
-        outputs = []
-        outputs.append(grpcclient.InferRequestedOutput("logits_labels"))
-        outputs.append(grpcclient.InferRequestedOutput("logits_d"))
+        outputs = [
+            grpcclient.InferRequestedOutput("logits_labels"),
+            grpcclient.InferRequestedOutput("logits_d")
+        ]
         
         # Call Triton server
         try:
@@ -258,6 +257,8 @@ class GECToRTriton(GECToR):
                 torch.max(probability_labels, dim=-1)[0] < min_error_prob
             ] = keep_index
 
+            # Note: This helper function is duplicated from GECToR.predict()
+            # to maintain consistency with the parent class implementation.
             def convert_ids_to_labels(ids, id2label):
                 labels = []
                 for id in ids.tolist():
