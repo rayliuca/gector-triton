@@ -28,6 +28,16 @@ This is one of the implementation of the following [paper](https://aclanthology.
 - [cofe-ai/fast-gector](https://github.com/cofe-ai/fast-gector)
     - Use Accelerate for distributed training
 
+# Features
+
+## Triton Inference Server Support
+This implementation supports running models on NVIDIA Triton Inference Server for remote inference. This allows you to:
+- Serve models on dedicated GPU servers
+- Scale inference independently from your application
+- Reduce client-side resource requirements
+
+See [TRITON_USAGE.md](TRITON_USAGE.md) for detailed documentation on using GECToR with Triton.
+
 # Installing
 Confirmed that it works on python3.11.0.
 ```sh

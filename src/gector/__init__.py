@@ -8,6 +8,15 @@ from .vocab import (
     load_vocab_from_config,
     load_vocab_from_official
 )
+
+# Import Triton model only if tritonclient is available
+try:
+    from .triton_modeling import GECToRTriton
+    _triton_available = True
+except ImportError:
+    _triton_available = False
+    GECToRTriton = None
+
 __all__ = [
     'GECToR',
     'GECToRConfig',
@@ -20,3 +29,6 @@ __all__ = [
     'load_vocab_from_config',
     'load_vocab_from_official'
 ]
+
+if _triton_available:
+    __all__.append('GECToRTriton')
