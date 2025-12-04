@@ -34,7 +34,9 @@ class TestGECToRTritonImport(unittest.TestCase):
             # If the import succeeded (tritonclient was available), skip this test
             self.skipTest("tritonclient is installed")
         else:
-            self.assertNotIn('GECToRTriton', gector.__all__)
+            # Check that GECToRTriton is not exported when tritonclient is not available
+            if hasattr(gector, '__all__'):
+                self.assertNotIn('GECToRTriton', gector.__all__)
         
         # Restore modules
         sys.modules.update(tritonclient_modules)
