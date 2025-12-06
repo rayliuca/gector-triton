@@ -51,13 +51,27 @@ class GECToRTriton(GECToR):
         triton_url: str = "localhost:8001",
         model_name: str = "gector",
         model_version: str = "1",
-        verbose: bool = False
+        verbose: bool = False,
+        device: str|torch.device|None = None,
     ):
         if not TRITON_AVAILABLE:
             raise ImportError(
                 "tritonclient is required for GECToRTriton. "
                 "Install it with: pip install tritonclient[grpc]"
             )
+
+        if device is None:
+            if torch.cuda.is_available():
+                device = torch.device("cuda")
+            else:
+                device = torch.device("cpu")
+        elif isinstance(device, str):
+            device = torch.device(device)
+        elif isinstance(device, torch.device):
+            ...
+        else:
+            raise ValueError("device must be str|torch.device|None")
+        self.device = device
         
         # IMPORTANT: We bypass GECToR.__init__() to avoid loading the BERT model locally.
         # Instead, we call PreTrainedModel.__init__() directly to set up the base model infrastructure.
