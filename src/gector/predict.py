@@ -4,6 +4,7 @@ from tqdm import tqdm
 from .modeling import GECToR
 from transformers import PreTrainedTokenizer
 from typing import List
+import time
 
 def load_verb_dict(verb_file: str):
     path_to_dict = os.path.join(verb_file)
@@ -169,6 +170,7 @@ def _predict(
             no_corrections.append(no_correct)
     return pred_labels, no_corrections
 
+from tqdm.auto import tqdm
 def predict(
     model: GECToR,
     tokenizer: PreTrainedTokenizer,

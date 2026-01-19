@@ -7,10 +7,13 @@ inference on models served via NVIDIA Triton Inference Server.
 
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
+from torch.nn import CrossEntropyLoss
 import numpy as np
 from typing import Optional, List
 from .modeling import GECToR, GECToROutput, GECToRPredictionOutput
-from .configuration import GECToRConfig
+from .configuration import TritonGeCToRConfig
+from transformers import AutoConfig
 
 try:
     import tritonclient.grpc as grpcclient
@@ -44,10 +47,11 @@ class GECToRTriton(GECToR):
         ... )
         >>> # Use model for predictions as usual
     """
-    
+    config_class = TritonGeCToRConfig
+
     def __init__(
         self,
-        config: GECToRConfig,
+        config: TritonGeCToRConfig,
         triton_url: str = "localhost:8001",
         model_name: str = "gector",
         model_version: str = "1",
@@ -71,7 +75,7 @@ class GECToRTriton(GECToR):
             ...
         else:
             raise ValueError("device must be str|torch.device|None")
-        self.device = device
+        self._device = device
         
         # IMPORTANT: We bypass GECToR.__init__() to avoid loading the BERT model locally.
         # Instead, we call PreTrainedModel.__init__() directly to set up the base model infrastructure.
@@ -86,10 +90,26 @@ class GECToRTriton(GECToR):
         
         # Initialize Triton client
         self._init_triton_client()
-        
+
+        self.bert_config = AutoConfig.from_pretrained(self.config.model_id)
+
         # Note: We don't load bert, label_proj_layer, d_proj_layer, or dropout
         # since inference happens on the Triton server
-    
+        self.label_proj_layer = nn.Linear(
+            self.bert_config.hidden_size,
+            self.config.num_labels - 1
+        ).to(self._device)  # -1 is for <PAD>
+        self.d_proj_layer = nn.Linear(
+            self.bert_config.hidden_size,
+            self.config.d_num_labels - 1
+        ).to(self._device)
+        self.dropout = nn.Dropout(self.config.p_dropout).to(self._device)
+        self.loss_fn = CrossEntropyLoss(
+            label_smoothing=self.config.label_smoothing
+        ).to(self._device)
+
+        self.post_init()
+
     def _init_triton_client(self):
         """Initialize the Triton gRPC client."""
         try:
@@ -170,7 +190,8 @@ class GECToRTriton(GECToR):
         
         attention_mask_input = grpcclient.InferInput("attention_mask", attention_mask_np.shape, "INT64")
         attention_mask_input.set_data_from_numpy(attention_mask_np)
-        
+
+        # print(input_ids_np)
         inputs = [input_ids_input, attention_mask_input]
         
         # Define outputs we expect from Triton
@@ -187,24 +208,51 @@ class GECToRTriton(GECToR):
                 inputs=inputs,
                 outputs=outputs
             )
-            
+            # print(response.get_response())
             # Get output tensors and convert back to torch
             logits_labels_np = response.as_numpy("logits_labels")
             logits_d_np = response.as_numpy("logits_d")
-            
+
             # Convert to torch tensors
             device = input_ids.device
             logits_labels = torch.from_numpy(logits_labels_np).to(device)
             logits_d = torch.from_numpy(logits_d_np).to(device)
-            
+
+            loss_d, loss_labels, loss = None, None, None
+            accuracy, accuracy_d = None, None
+            if d_labels is not None and labels is not None:
+                pad_id = self.config.label2id[self.config.label_pad_token]
+                # -100 is the default ignore_idx of CrossEntropyLoss
+                labels[labels == pad_id] = -100
+                d_labels[labels == -100] = -100
+                loss_d = self.loss_fn(
+                    logits_d.view(-1, self.config.d_num_labels - 1),  # -1 for <PAD>
+                    d_labels.view(-1)
+                )
+                loss_labels = self.loss_fn(
+                    logits_labels.view(-1, self.config.num_labels - 1),
+                    labels.view(-1)
+                )
+                loss = loss_d + loss_labels
+
+                pred_labels = torch.argmax(logits_labels, dim=-1)
+                accuracy = torch.sum(
+                    (labels == pred_labels) * word_masks
+                ) / torch.sum(word_masks)
+                pred_d = torch.argmax(logits_d, dim=-1)
+                accuracy_d = torch.sum(
+                    (d_labels == pred_d) * word_masks
+                ) / torch.sum(word_masks)
+
+            # print(logits_d)
             return GECToROutput(
-                loss=None,
-                loss_d=None,
-                loss_labels=None,
+                loss=loss,
+                loss_d=loss_d,
+                loss_labels=loss_labels,
                 logits_d=logits_d,
                 logits_labels=logits_labels,
-                accuracy=None,
-                accuracy_d=None
+                accuracy=accuracy,
+                accuracy_d=accuracy_d
             )
             
         except InferenceServerException as e:
@@ -259,7 +307,7 @@ class GECToRTriton(GECToR):
             # (batch_size, seq_len) -> (batch_size)
             max_error_probability = torch.max(probability_d_incor * word_masks, dim=-1)[0]
             # Sentence-level threshold.
-            #   Set the $KEEP tag to all tokens in the sentences 
+            #   Set the $KEEP tag to all tokens in the sentences
             #   that have lower maximum error prob. than threshold.
             pred_label_ids[
                 max_error_probability < min_error_prob, :
@@ -320,7 +368,7 @@ class GECToRTriton(GECToR):
             GECToRTriton instance configured for Triton inference
         """
         # Load the config from the pretrained model
-        config = GECToRConfig.from_pretrained(pretrained_model_name_or_path)
+        config = TritonGeCToRConfig.from_pretrained(pretrained_model_name_or_path)
         
         # Create and return the Triton model
         return cls(
@@ -339,12 +387,22 @@ class GECToRTriton(GECToR):
         if self.verbose:
             print("tune_bert() is not applicable for Triton models - skipping")
         return
-    
-    def init_weight(self):
-        """
-        Override init_weight since we don't have local layers.
-        This is a no-op for Triton models.
-        """
-        if self.verbose:
-            print("init_weight() is not applicable for Triton models - skipping")
+    def init_weight(self) -> None:
+        self._init_weights(self.label_proj_layer)
+        self._init_weights(self.d_proj_layer)
+
+    def _init_weights(self, module) -> None:
+        """Initialize the weights"""
+        if isinstance(module, nn.Linear):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            module.weight.data.normal_(
+                mean=0.0,
+                std=self.config.initializer_range
+            )
+            if module.bias is not None:
+                module.bias.data.zero_()
         return
+    @property
+    def device(self):
+        return self._device

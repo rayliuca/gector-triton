@@ -38,3 +38,13 @@ class GECToRConfig(PretrainedConfig):
         self.has_add_pooling_layer = has_add_pooling_layer
         self.initializer_range = initializer_range
         self.is_official_model = is_official_model
+
+
+class TritonGeCToRConfig(GECToRConfig):
+    def __init__(
+        self,
+        # pretrained_model_name_or_path: str = 'gotutiyan/gector-roberta-large-5k',
+        **kwards
+    ):
+        super().__init__(**kwards)
+        # self.pretrained_model_name_or_path = pretrained_model_name_or_path
