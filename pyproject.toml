@@ -1,10 +1,10 @@
 [project]
-name = "gector"
-version = "1.2.0"
-description = "Unofficial PyTorch implementation of 'GECToR -- Grammatical Error Correction: Tag, Not Rewrite'"
+name = "gector-triton"
+version = "1.2.1"
+description = "gotutiyan/gector with remote triton backend"
 readme = "README.md"
 authors = [
-    { name = "gotuiyan"}
+    # { name = "gotuiyan"}
 ]
 requires-python = ">=3.11.0"
 dependencies = [
